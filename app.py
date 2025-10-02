@@ -1,12 +1,22 @@
 import os
-from flask import Flask, render_template, request, url_for, redirect, flash, jsonify
+from flask import Flask, render_template, request, url_for, redirect, flash, jsonify, send_file
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, time
 from functools import wraps
+from sqlalchemy import func
+
+# Importa as bibliotecas para gerar PDF
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
+import io
 
 load_dotenv()
 
@@ -26,19 +36,9 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     "pool_pre_ping": True,
 }
 
-# --- REMOVIDO: CONFIGURAÇÃO DE E-MAIL ---
-# app.config['MAIL_SERVER'] = os.environ.get('MAIL_SERVER')
-# app.config['MAIL_PORT'] = int(os.environ.get('MAIL_PORT', 587))
-# app.config['MAIL_USE_TLS'] = os.environ.get('MAIL_USE_TLS', 'true').lower() in ['true', 'on', '1']
-# app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
-# app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
-# app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_DEFAULT_SENDER')
-
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
 login_manager = LoginManager(app)
-# REMOVIDO: Instância do Flask-Mail
-# mail = Mail(app)
 login_manager.login_view = 'login'
 
 
@@ -384,6 +384,170 @@ def archive_masses_manual():
         db.session.rollback()
         flash(f'Ocorreu um erro ao arquivar as missas: {e}', 'danger')
     return redirect(url_for('admin_panel'))
+
+@app.route('/admin/gerar-escala-padrao', methods=['POST'])
+@login_required
+@admin_required
+def gerar_escala_padrao():
+    try:
+        # Pega a data de hoje
+        hoje = date.today()
+        # Encontra a próxima segunda-feira
+        start_date = hoje + timedelta(days=(7 - hoje.weekday()) % 7)
+
+        # Definição dos horários e funções padrão
+        escala_padrao = {
+            0: [{'horario': time(19, 0), 'funcoes': ["Cerimoniário Mor (CM)", "Cerimoniário da Palavra (CP)"]}], # Segunda-feira
+            1: [{'horario': time(19, 0), 'funcoes': ["Cerimoniário Mor (CM)", "Cerimoniário da Palavra (CP)"]}], # Terça-feira
+            2: [{'horario': time(19, 0), 'funcoes': ["Cerimoniário Mor (CM)", "Cerimoniário da Palavra (CP)"]}], # Quarta-feira
+            3: [{'horario': time(19, 0), 'funcoes': ["Cerimoniário Mor (CM)", "Cerimoniário da Palavra (CP)"]}], # Quinta-feira
+            4: [{'horario': time(19, 0), 'funcoes': ["Cerimoniário Mor (CM)", "Cerimoniário da Palavra (CP)"]}], # Sexta-feira
+            5: [{'horario': time(19, 0), 'funcoes': ["Cerimoniário Mor (CM)", "Cerimoniário da Palavra (CP)"]}], # Sábado
+            6: [{'horario': time(8, 0), 'funcoes': ["Cerimoniário Mor (CM)", "Cerimoniário da Palavra (CP)"]},
+                {'horario': time(9, 30), 'funcoes': ["Cerimoniário Mor (CM)", "Cerimoniário da Palavra (CP)"]},
+                {'horario': time(19, 0), 'funcoes': ["Cerimoniário Mor (CM)", "Cerimoniário da Palavra (CP)"]}] # Domingo
+        }
+
+        missas_criadas = 0
+        for i in range(7):
+            dia = start_date + timedelta(days=i)
+            if i in escala_padrao:
+                for agendamento in escala_padrao[i]:
+                    missa_existente = Missa.query.filter_by(data=dia, horario=agendamento['horario']).first()
+                    if not missa_existente:
+                        nova_missa = Missa(data=dia, horario=agendamento['horario'])
+                        db.session.add(nova_missa)
+                        db.session.flush()
+
+                        for funcao_nome in agendamento['funcoes']:
+                            nova_vaga = Vaga(funcao=funcao_nome, missa_id=nova_missa.id)
+                            db.session.add(nova_vaga)
+                        missas_criadas += 1
+
+        db.session.commit()
+        if missas_criadas > 0:
+            flash(f"Sucesso! {missas_criadas} missas criadas para a semana de {start_date.strftime('%d/%m/%Y')} a {(start_date + timedelta(days=6)).strftime('%d/%m/%Y')}.", 'success')
+        else:
+            flash("Não foi necessário criar missas, a escala padrão da próxima semana já existe.", 'secondary')
+
+    except Exception as e:
+        db.session.rollback()
+        flash(f"Ocorreu um erro ao gerar a escala padrão: {e}", "danger")
+
+    return redirect(url_for('admin_panel'))
+
+
+@app.route('/admin/gerar-ata')
+@login_required
+@admin_required
+def gerar_ata():
+    try:
+        hoje = date.today()
+        start_date = hoje + timedelta(days=(7 - hoje.weekday()) % 7)
+        end_date = start_date + timedelta(days=6)
+
+        missas = Missa.query.filter(
+            Missa.data >= start_date,
+            Missa.data <= end_date,
+            Missa.arquivada == False
+        ).order_by(Missa.data, Missa.horario).all()
+        
+        dias_semana_full = ["Segunda-Feira", "Terça-Feira", "Quarta-Feira", "Quinta-Feira", "Sexta-Feira", "Sábado", "Domingo"]
+        
+        funcoes_na_semana = sorted(list(set(vaga.funcao for missa in missas for vaga in missa.vagas)))
+        
+        dados_tabela_escala = [["Dia", "Horário"] + funcoes_na_semana]
+        
+        missas_por_dia = {}
+        for missa in missas:
+            dia_semana_num = missa.data.weekday()
+            if dia_semana_num not in missas_por_dia:
+                missas_por_dia[dia_semana_num] = []
+            missas_por_dia[dia_semana_num].append(missa)
+
+        for i in range(7):
+            dia_semana_nome = dias_semana_full[i]
+            missas_do_dia = sorted(missas_por_dia.get(i, []), key=lambda m: m.horario)
+            
+            if missas_do_dia:
+                for index, missa in enumerate(missas_do_dia):
+                    linha = []
+                    linha.append(dia_semana_nome if index == 0 else "")
+                    linha.append(missa.horario.strftime('%H:%M'))
+                    
+                    for funcao in funcoes_na_semana:
+                        vaga_encontrada = next((v for v in missa.vagas if v.funcao == funcao), None)
+                        nome_acolito = vaga_encontrada.usuario.nome if vaga_encontrada and vaga_encontrada.usuario else ""
+                        linha.append(nome_acolito)
+                    dados_tabela_escala.append(linha)
+            else:
+                linha_vazia = [dia_semana_nome, ""] + [""] * len(funcoes_na_semana)
+                dados_tabela_escala.append(linha_vazia)
+
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4)
+        elements = []
+        styles = getSampleStyleSheet()
+
+        elements.append(Paragraph(f"ESCALA SERVOS DO ALTAR - SEMANA DE {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}", styles['Heading1']))
+        elements.append(Spacer(1, 0.2*inch))
+        elements.append(Paragraph("Ata de Escala de Acólitos", styles['Heading2']))
+        elements.append(Spacer(1, 0.2*inch))
+        
+        style_escala = TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ])
+        
+        merged_spans = []
+        current_day_start_row = 1
+        for row_index, row in enumerate(dados_tabela_escala[1:], 1):
+            if row[0] != "":
+                if row_index > current_day_start_row:
+                    style_escala.add('SPAN', (0, current_day_start_row), (0, row_index-1))
+                current_day_start_row = row_index
+        if len(dados_tabela_escala) > current_day_start_row:
+            style_escala.add('SPAN', (0, current_day_start_row), (0, len(dados_tabela_escala)-1))
+
+        colWidths = [1.5*inch, 0.8*inch] + [1.8*inch] * len(funcoes_na_semana)
+        t = Table(dados_tabela_escala, colWidths=colWidths)
+        t.setStyle(style_escala)
+        
+        elements.append(t)
+        elements.append(Spacer(1, 0.5*inch))
+        
+        assinatura_headers = ["Função", "Assinatura"]
+        assinatura_data = [assinatura_headers]
+        for funcao in funcoes_na_semana:
+            assinatura_data.append([funcao, ""])
+            
+        t_assinatura = Table(assinatura_data, colWidths=[2.5*inch, 3.5*inch])
+        t_assinatura.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ]))
+        
+        elements.append(Paragraph("CAMPOS PARA ASSINATURA", styles['Heading3']))
+        elements.append(Spacer(1, 0.2*inch))
+        elements.append(t_assinatura)
+        
+        doc.build(elements)
+        buffer.seek(0)
+        
+        return send_file(buffer, as_attachment=True, download_name='ata_escala.pdf', mimetype='application/pdf')
+
+    except Exception as e:
+        flash(f"Erro ao gerar a ata: {e}", "danger")
+        return redirect(url_for('admin_panel'))
 
 
 # --- 8. ROTA DA API ---

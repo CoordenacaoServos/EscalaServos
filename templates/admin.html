@@ -51,6 +51,14 @@
             </ul>
         </nav>
 
+        <article>
+            <hgroup>
+                <h2>Ata de Escala</h2>
+                <p>Gere uma ata em PDF com a escala da próxima semana.</p>
+            </hgroup>
+            <a href="{{ url_for('gerar_ata') }}" role="button" class="contrast">Gerar Ata de Escala (PDF)</a>
+        </article>
+
         {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}{% for category, message in messages %}
         <article class="{{ category if category in ['success', 'danger'] else 'secondary' }}"
@@ -142,6 +150,11 @@
             </form>
             <hr>
 
+            <form action="{{ url_for('gerar_escala_padrao') }}" method="post" onsubmit="return confirm('Deseja realmente gerar a escala padrão para a próxima semana? Missas já existentes não serão duplicadas.');">
+                <button type="submit" class="secondary" style="margin-bottom: 20px;">Gerar Escala Padrão da Próxima Semana</button>
+            </form>
+            <hr>
+            
             {% for missa in missas %}
             <article>
                 <header>
