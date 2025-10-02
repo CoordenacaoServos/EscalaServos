@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Editar Missa</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@1/css/pico.min.css">
+</head>
+<body>
+    <main class="container" style="max-width: 600px;">
+        <nav>
+            <ul><li><strong>Editar Missa</strong></li></ul>
+            <ul>
+                <li><a href="{{ url_for('admin_panel') }}">Voltar ao Painel</a></li>
+                <li><a href="{{ url_for('logout') }}" role="button" class="secondary outline">Sair</a></li>
+            </ul>
+        </nav>
+
+        <article>
+            <hgroup>
+                <h2>Editando a Missa de {{ missa.data.strftime('%d/%m/%Y') }}</h2>
+                <p>Ajuste a data e o horário da celebração.</p>
+            </hgroup>
+            <form method="post">
+                <div class="grid">
+                    <label>Data da Missa
+                        <input type="date" name="data" value="{{ missa.data.isoformat() }}" required>
+                    </label>
+                    <label>Horário
+                        <input type="time" name="horario" value="{{ missa.horario.strftime('%H:%M') }}" required>
+                    </label>
+                </div>
+                <button type="submit">Salvar Alterações</button>
+            </form>
+        </article>
+    </main>
+</body>
+</html>

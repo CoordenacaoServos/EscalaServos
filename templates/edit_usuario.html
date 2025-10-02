@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Editar Habilidades de {{ usuario.nome }}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@1/css/pico.min.css">
+</head>
+<body>
+    <main class="container">
+        <nav>
+            <ul><li><strong>Editar Habilidades</strong></li></ul>
+            <ul>
+                <li><a href="{{ url_for('admin_panel') }}">Voltar ao Painel</a></li>
+                <li><a href="{{ url_for('logout') }}" role="button" class="secondary outline">Sair</a></li>
+            </ul>
+        </nav>
+
+        <article>
+            <hgroup>
+                <h2>Gerenciar Habilidades de {{ usuario.nome }}</h2>
+                <p>Marque as funções que este acólito está apto a exercer.</p>
+            </hgroup>
+            <form method="post">
+                {% for habilidade in todas_habilidades %}
+                <fieldset>
+                    <label>
+                        <input 
+                            type="checkbox" 
+                            name="habilidades" 
+                            value="{{ habilidade.id }}"
+                            {% if habilidade in usuario.habilidades %}checked{% endif %}>
+                        {{ habilidade.funcao }}
+                    </label>
+                </fieldset>
+                {% endfor %}
+                <button type="submit">Salvar Habilidades</button>
+            </form>
+        </article>
+    </main>
+</body>
+</html>

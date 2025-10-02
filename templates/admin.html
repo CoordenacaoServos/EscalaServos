@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Painel do Coordenador</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@1/css/pico.min.css">
+    <style>
+        .vaga-input { display: flex; gap: 1rem; align-items: center; margin-bottom: 0.5rem; }
+        .vaga-input input, .vaga-input select { margin-bottom: 0; }
+        .vaga-item { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--card-border-color); }
+        .vaga-item:last-child { border-bottom: none; }
+        .form-alocar { display: inline-flex; gap: 0.5rem; align-items: center; }
+    </style>
+</head>
+<body>
+    <main class="container">
+        <nav>
+            <ul><li><strong>Painel do Coordenador</strong></li></ul>
+            <ul>
+                <li><a href="{{ url_for('index') }}">Ver Escala</a></li>
+                <li><a href="{{ url_for('logout') }}" role="button" class="secondary outline">Sair</a></li>
+            </ul>
+        </nav>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}{% for category, message in messages %}
+                <article class="{{ category if category in ['success', 'danger'] else 'secondary' }}" style="background-color: var(--card-background-color); border-color: var(--card-border-color);">{{ message }}</article>
+            {% endfor %}{% endif %}
+        {% endwith %}
+
+        <article>
+            <hgroup>
+                <h2>Gerenciar Acólitos</h2>
+                <p>Cadastre novos acólitos no sistema.</p>
+            </hgroup>
+            <form action="{{ url_for('add_user') }}" method="post">
+                <div class="grid">
+                    <input type="text" name="nome" placeholder="Nome completo" required>
+                    <input type="email" name="email" placeholder="Email" required>
+                    <input type="password" name="password" placeholder="Senha temporária" required>
+                </div>
+                <button type="submit">Cadastrar Acólito</button>
+            </form>
+            <hr>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Nome</th>
+                        <th>Email</th>
+                        <th>Ações</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for usuario in usuarios %}
+                    <tr>
+                        <td>{{ usuario.nome }}</td>
+                        <td>{{ usuario.email }}</td>
+                        <td>
+                            {% if not usuario.is_admin %}
+                            <a href="{{ url_for('edit_usuario', user_id=usuario.id) }}" role="button" class="outline"
+                                style="padding: 2px 8px;">Editar Habilidades</a>
+                            {% else %}
+                            Admin
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="3">Nenhum acólito cadastrado.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </article>
+
+        <article>
+            <hgroup>
+                <h2>Gerenciar Missas</h2>
+                <p>Adicione, remova ou edite as vagas das missas cadastradas.</p>
+            </hgroup>
+
+            <form method="post" action="{{ url_for('add_missa') }}">
+                <div class="grid">
+                    <label>Data da Missa<input type="date" name="data" required></label>
+                    <label>Horário<input type="time" name="horario" required></label>
+                </div>
+                <fieldset>
+                    <legend>Vagas Necessárias</legend>
+                    <div id="vagas-container">
+                        <div class="vaga-input">
+                            <select name="funcao" required>
+                                <option value="" disabled selected>Selecione uma função...</option>
+                                {% for habilidade in todas_habilidades %}
+                                <option value="{{ habilidade.funcao }}">{{ habilidade.funcao }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                    <button type="button" onclick="adicionarVaga()" class="secondary outline" style="width: auto;">+ Adicionar Vaga</button>
+                </fieldset>
+                <button type="submit">Cadastrar Missa</button>
+            </form>
+            <hr>
+
+            {% for missa in missas %}
+            <article>
+                <header>
+                    <strong>{{ missa.data.strftime('%d/%m/%Y') }} ({{ dias_semana[missa.data.weekday()] }})</strong> - {{ missa.horario.strftime('%H:%M') }}
+                    
+                    <div style="display: inline-block; float: right;">
+                        <a href="{{ url_for('edit_missa', missa_id=missa.id) }}" role="button" class="secondary outline" style="padding: 2px 8px; margin-right: 5px;">Editar</a>
+                        <form action="{{ url_for('delete_missa', missa_id=missa.id) }}" method="post" style="display: inline;">
+                            <button type="submit" class="contrast outline" onclick="return confirm('Tem certeza que deseja excluir esta missa e todas as suas vagas?')" style="padding: 2px 8px;">Excluir</button>
+                        </form>
+                    </div>
+                </header>
+                {% for vaga in missa.vagas %}
+                <div class="vaga-item">
+                    <span>{{ vaga.funcao }}:</span>
+                    <div>
+                        {% if vaga.usuario %}
+                        <span>{{ vaga.usuario.nome }}</span>
+                        <form action="{{ url_for('unassign_vaga', vaga_id=vaga.id) }}" method="post"
+                            class="form-alocar">
+                            <button type="submit" class="secondary outline"
+                                style="padding: 2px 8px; margin-left: 10px;">Remover</button>
+                        </form>
+                        {% else %}
+                        <form action="{{ url_for('assign_vaga', vaga_id=vaga.id) }}" method="post" class="form-alocar">
+                            <select name="usuario_id" required>
+                                <option value="" disabled selected>Selecione um acólito...</option>
+                                {% for acolito in vaga.acolitos_qualificados %}
+                                <option value="{{ acolito.id }}">{{ acolito.nome }}</option>
+                                {% endfor %}
+                            </select>
+                            <button type="submit" class="contrast" style="padding: 5px 10px;">Alocar</button>
+                        </form>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </article>
+            {% else %}
+            <p>Nenhuma missa cadastrada para gerenciar.</p>
+            {% endfor %}
+        </article>
+    </main>
+
+    <script>
+        function adicionarVaga() {
+            const container = document.getElementById('vagas-container');
+            const novaVaga = document.createElement('div');
+            novaVaga.className = 'vaga-input';
+            
+            let selectHTML = '<select name="funcao" required>';
+            selectHTML += '<option value="" disabled selected>Selecione uma função...</option>';
+            {% for habilidade in todas_habilidades %}
+            selectHTML += '<option value="{{ habilidade.funcao }}">{{ habilidade.funcao }}</option>';
+            {% endfor %}
+            selectHTML += '</select>';
+            
+            novaVaga.innerHTML = selectHTML + `
+                <a href="#" onclick="this.parentElement.remove(); return false;" role="button" class="secondary outline" style="width: auto; margin: 0; padding: 0.5rem 0.8rem; text-decoration: none;">-</a>
+            `;
+            container.appendChild(novaVaga);
+        }
+    </script>
+</body>
+</html>

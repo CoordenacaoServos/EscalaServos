@@ -1,0 +1,6 @@
+.env
+instance/
+gerar_hash.py
+__pycache__/
+
+venv/

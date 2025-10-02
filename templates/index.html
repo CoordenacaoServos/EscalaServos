@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Escala de Acólitos</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@1/css/pico.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <nav>
+            <ul>
+                <li><strong>Escala de Acólitos</strong></li>
+            </ul>
+            <ul>
+                {% if current_user.is_admin %}
+                <li><a href="{{ url_for('admin_panel') }}">Painel do Coordenador</a></li>
+                {% endif %}
+                <li><a href="{{ url_for('logout') }}" role="button" class="secondary outline">Sair</a></li>
+            </ul>
+        </nav>
+    </div>
+
+    <main class="container">
+        <hgroup>
+            <h1>Escala Disponível</h1>
+            <p>Clique em uma vaga aberta para se escalar ou no 'X' para liberar sua vaga.</p>
+        </hgroup>
+        
+        <div id="schedule-container">
+            <p style="text-align:center;">Carregando escala...</p>
+        </div>
+    </main>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
