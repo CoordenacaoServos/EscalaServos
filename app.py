@@ -13,7 +13,15 @@ load_dotenv()
 # --- 1. CONFIGURAÇÃO ---
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'default-secret-key-for-dev')
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///escala.db'
+
+# Lógica para usar o banco de dados do Render (PostgreSQL) ou SQLite local
+database_url = os.environ.get('DATABASE_URL')
+if database_url:
+    # Corrige a URL do Render para ser compatível com SQLAlchemy
+    app.config['SQLALCHEMY_DATABASE_URI'] = database_url.replace("postgres://", "postgresql://", 1)
+else:
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///escala.db'
+
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
@@ -47,7 +55,7 @@ class Missa(db.Model):
     data = db.Column(db.Date, nullable=False)
     horario = db.Column(db.Time, nullable=False)
     vagas = db.relationship('Vaga', backref='missa', lazy=True, cascade="all, delete-orphan")
-    arquivada = db.Column(db.Boolean, default=False, nullable=False) # Coluna para arquivamento
+    arquivada = db.Column(db.Boolean, default=False, nullable=False)
 
 class Vaga(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -56,11 +64,10 @@ class Vaga(db.Model):
     usuario_id = db.Column(db.Integer, db.ForeignKey('usuario.id'), nullable=True)
     usuario = db.relationship('Usuario')
 
-# --- 3. LÓGICA DE LIMPEZA AUTOMÁTICA ---
+# --- 3. LÓGICA DE LIMPEZA E DECORATORS ---
 @app.before_request
 def cleanup_old_masses():
     cutoff_date = date.today() - timedelta(days=15)
-    # Encontra missas com mais de 15 dias que ainda não foram arquivadas
     missas_para_arquivar = Missa.query.filter(Missa.data < cutoff_date, Missa.arquivada == False).all()
     if missas_para_arquivar:
         for missa in missas_para_arquivar:
@@ -80,7 +87,45 @@ def admin_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-# --- 4. ROTAS DE AUTENTICAÇÃO E PÁGINAS PRINCIPAIS ---
+# --- 4. ROTA SECRETA PARA SETUP INICIAL ---
+@app.route('/setup-inicial/<secret_key>')
+def setup_database(secret_key):
+    # Apenas executa se a chave na URL for igual à SECRET_KEY da aplicação
+    if secret_key != app.config['SECRET_KEY']:
+        return "Acesso negado: chave inválida.", 403
+
+    try:
+        # 1. Popula as Habilidades
+        funcoes_padrao = ["Cerimoniário Mor (CM)", "Cerimoniário da Palavra (CP)", "Cruciferário (CR)", "Ceroferário (Vela)", "Turiferário (T)", "Naveteiro (N)", "Mitra (M)", "Báculo (B)","Acólito Geral"]
+        habilidades_criadas = 0
+        for funcao in funcoes_padrao:
+            if not Habilidade.query.filter_by(funcao=funcao).first():
+                db.session.add(Habilidade(funcao=funcao))
+                habilidades_criadas += 1
+        
+        # 2. Cria o Administrador a partir das variáveis de ambiente
+        admin_email = os.environ.get('ADMIN_EMAIL')
+        admin_pass = os.environ.get('ADMIN_PASSWORD')
+        admin_nome = os.environ.get('ADMIN_NAME')
+
+        if not (admin_email and admin_pass and admin_nome):
+            return "Variáveis de ambiente do admin (ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_NAME) não configuradas no Render.", 500
+
+        admin_criado = "não criado (já existe)"
+        if not Usuario.query.filter_by(email=admin_email).first():
+            admin = Usuario(email=admin_email, nome=admin_nome, is_admin=True)
+            admin.set_password(admin_pass)
+            db.session.add(admin)
+            admin_criado = "criado com sucesso"
+        
+        db.session.commit()
+        return f"Setup concluído. {habilidades_criadas} habilidades criadas. Admin {admin_criado}. POR SEGURANÇA, REMOVA ESTA ROTA DO SEU CÓDIGO AGORA.", 200
+    
+    except Exception as e:
+        db.session.rollback()
+        return f"Ocorreu um erro durante o setup: {e}", 500
+
+# --- 5. ROTAS DE AUTENTICAÇÃO E PÁGINAS ---
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if current_user.is_authenticated: return redirect(url_for('index'))
@@ -104,22 +149,17 @@ def logout():
 def index():
     return render_template('index.html')
 
-# --- 5. ROTAS DO PAINEL DO COORDENADOR ---
+# --- 6. ROTAS DO PAINEL DO COORDENADOR ---
 @app.route('/admin')
 @login_required
 @admin_required
 def admin_panel():
     usuarios = Usuario.query.order_by(Usuario.nome).all()
     missas = Missa.query.filter_by(arquivada=False).order_by(Missa.data.desc(), Missa.horario).all()
-    
     for missa in missas:
         for vaga in missa.vagas:
-            acolitos_qualificados = Usuario.query.join(Usuario.habilidades).filter(
-                Habilidade.funcao == vaga.funcao,
-                Usuario.is_admin == False
-            ).order_by(Usuario.nome).all()
+            acolitos_qualificados = Usuario.query.join(Usuario.habilidades).filter(Habilidade.funcao == vaga.funcao, Usuario.is_admin == False).order_by(Usuario.nome).all()
             vaga.acolitos_qualificados = acolitos_qualificados
-            
     dias_semana = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
     todas_habilidades = Habilidade.query.order_by(Habilidade.funcao).all()
     return render_template('admin.html', usuarios=usuarios, missas=missas, dias_semana=dias_semana, todas_habilidades=todas_habilidades)
@@ -203,7 +243,6 @@ def add_missa():
         flash(f"Erro ao cadastrar missa: {e}", "danger")
     return redirect(url_for('admin_panel'))
 
-# ROTAS NOVAS PARA EDITAR E EXCLUIR MISSA
 @app.route('/admin/edit_missa/<int:missa_id>', methods=['GET', 'POST'])
 @login_required
 @admin_required
@@ -227,37 +266,15 @@ def delete_missa(missa_id):
     flash("Missa excluída com sucesso.", "success")
     return redirect(url_for('admin_panel'))
 
-# --- 6. ROTA DA API ---
+# --- 7. ROTA DA API ---
 @app.route('/api/missas')
 @login_required
 def get_missas():
     missas_db = Missa.query.filter_by(arquivada=False).order_by(Missa.data, Missa.horario).all()
-    lista_missas = []
-    dias_semana = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
+    lista_missas, dias_semana = [], ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
     for missa in missas_db:
         slots = []
         for vaga in missa.vagas:
             slots.append({"role": vaga.funcao, "acolyte": vaga.usuario.nome if vaga.usuario else None})
         lista_missas.append({"id": missa.id, "date": missa.data.isoformat(), "day": dias_semana[missa.data.weekday()], "time": missa.horario.strftime('%H:%M'), "slots": slots})
     return jsonify({"status": "sucesso", "missas": lista_missas})
-
-# --- 7. COMANDOS CLI ---
-@app.cli.command("create-admin")
-def create_admin():
-    # ... (código do create-admin)
-    email, password, nome = input("Digite o email: "), input("Digite a senha: "), input("Digite o nome: ")
-    if Usuario.query.filter_by(email=email).first():
-        print(f"Usuário '{email}' já existe.")
-        return
-    senha_hash = generate_password_hash(password)
-    new_admin = Usuario(email=email, nome=nome, senha_hash=senha_hash, is_admin=True)
-    db.session.add(new_admin); db.session.commit(); print(f"Admin '{nome}' criado.")
-
-@app.cli.command("seed-habilidades")
-def seed_habilidades():
-    # ... (código do seed-habilidades)
-    funcoes_padrao = ["Cerimoniário Mor (CM)", "Cerimoniário da Palavra (CP)", "Cruciferário (CR)", "Ceroferário (Vela)", "Turiferário (T)", "Naveteiro (N)", "Mitra (M)", "Báculo (B)","Acólito Geral"]
-    for funcao in funcoes_padrao:
-        if not Habilidade.query.filter_by(funcao=funcao).first():
-            db.session.add(Habilidade(funcao=funcao)); print(f"Adicionando habilidade: {funcao}")
-    db.session.commit(); print("Tabela de habilidades populada.")
