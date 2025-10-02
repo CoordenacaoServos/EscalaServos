@@ -230,6 +230,39 @@ def admin_panel():
     todas_habilidades = Habilidade.query.order_by(Habilidade.funcao).all()
     return render_template('admin.html', usuarios=usuarios, missas=missas, dias_semana=dias_semana, todas_habilidades=todas_habilidades)
 
+# Nova rota para excluir usuário
+@app.route('/admin/delete_user/<int:user_id>', methods=['POST'])
+@login_required
+@admin_required
+def delete_user(user_id):
+    usuario_a_excluir = Usuario.query.get_or_404(user_id)
+    
+    # Verifica se o usuário logado está tentando excluir a si mesmo
+    if usuario_a_excluir.id == current_user.id:
+        flash("Você não pode excluir a sua própria conta de administrador.", "danger")
+        return redirect(url_for('admin_panel'))
+
+    # Verifica se o usuário a ser excluído é outro administrador
+    if usuario_a_excluir.is_admin:
+        flash("Não é possível excluir um administrador.", "danger")
+        return redirect(url_for('admin_panel'))
+
+    try:
+        # Primeiro, desaloque o acólito de todas as vagas para evitar erros
+        Vaga.query.filter_by(usuario_id=user_id).update({"usuario_id": None})
+        db.session.commit()
+        
+        # Em seguida, exclua o usuário
+        db.session.delete(usuario_a_excluir)
+        db.session.commit()
+        flash(f"O acólito '{usuario_a_excluir.nome}' foi excluído com sucesso.", "success")
+    except Exception as e:
+        db.session.rollback()
+        flash(f"Erro ao excluir o acólito: {e}", "danger")
+    
+    return redirect(url_for('admin_panel'))
+
+
 @app.route('/admin/usuario/<int:user_id>', methods=['GET', 'POST'])
 @login_required
 @admin_required
