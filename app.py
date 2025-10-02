@@ -28,7 +28,6 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 }
 
 # --- CONFIGURAÇÃO DE E-MAIL ---
-# (Mantemos as configurações, mas a funcionalidade não será usada na rota)
 app.config['MAIL_SERVER'] = os.environ.get('MAIL_SERVER')
 app.config['MAIL_PORT'] = int(os.environ.get('MAIL_PORT', 587))
 app.config['MAIL_USE_TLS'] = os.environ.get('MAIL_USE_TLS', 'true').lower() in ['true', 'on', '1']
@@ -189,9 +188,9 @@ def inscrever_vaga(vaga_id):
         if vaga.usuario_id is not None:
             return jsonify({"status": "erro", "message": "Esta vaga já foi ocupada."}), 409
         
-        # 3. Verificar se o acólito logado tem a habilidade necessária para a função
+        # 3. Verificar se o acólito logado tem a habilidade necessária OU é um admin
         funcao_desejada = vaga.funcao
-        acolito_pode_pegar_vaga = any(habilidade.funcao == funcao_desejada for habilidade in current_user.habilidades)
+        acolito_pode_pegar_vaga = current_user.is_admin or any(habilidade.funcao == funcao_desejada for habilidade in current_user.habilidades)
         
         if not acolito_pode_pegar_vaga:
             return jsonify({"status": "erro", "message": f"Você não tem a habilidade necessária ({funcao_desejada}) para se inscrever nesta vaga."}), 403
@@ -216,8 +215,17 @@ def admin_panel():
     missas = Missa.query.filter_by(arquivada=False).order_by(Missa.data.desc(), Missa.horario).all()
     for missa in missas:
         for vaga in missa.vagas:
-            acolitos_qualificados = Usuario.query.join(Usuario.habilidades).filter(Habilidade.funcao == vaga.funcao, Usuario.is_admin == False).order_by(Usuario.nome).all()
-            vaga.acolitos_qualificados = acolitos_qualificados
+            # Acólitos qualificados incluem todos os acólitos não-admin COM a habilidade
+            acolitos_qualificados_por_habilidade = Usuario.query.join(Usuario.habilidades).filter(Habilidade.funcao == vaga.funcao, Usuario.is_admin == False).order_by(Usuario.nome).all()
+            
+            # Admins também são incluídos para alocação manual
+            admins = Usuario.query.filter_by(is_admin=True).order_by(Usuario.nome).all()
+            
+            vaga.acolitos_qualificados = sorted(
+                list(set(acolitos_qualificados_por_habilidade + admins)), 
+                key=lambda u: u.nome
+            )
+            
     dias_semana = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
     todas_habilidades = Habilidade.query.order_by(Habilidade.funcao).all()
     return render_template('admin.html', usuarios=usuarios, missas=missas, dias_semana=dias_semana, todas_habilidades=todas_habilidades)
