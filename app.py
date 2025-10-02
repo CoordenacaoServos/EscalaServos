@@ -195,6 +195,35 @@ def pedir_substituicao(vaga_id):
 
     return redirect(url_for('minha_escala'))
 
+@app.route('/api/inscrever-vaga/<int:vaga_id>', methods=['POST'])
+@login_required
+def inscrever_vaga(vaga_id):
+    try:
+        # 1. Encontrar a vaga pelo ID
+        vaga = Vaga.query.get_or_404(vaga_id)
+        
+        # 2. Verificar se a vaga está disponível
+        if vaga.usuario_id is not None:
+            return jsonify({"status": "erro", "message": "Esta vaga já foi ocupada."}), 409
+        
+        # 3. Verificar se o acólito logado tem a habilidade necessária para a função
+        funcao_desejada = vaga.funcao
+        acolito_pode_pegar_vaga = any(habilidade.funcao == funcao_desejada for habilidade in current_user.habilidades)
+        
+        if not acolito_pode_pegar_vaga:
+            return jsonify({"status": "erro", "message": f"Você não tem a habilidade necessária ({funcao_desejada}) para se inscrever nesta vaga."}), 403
+
+        # 4. Atribuir a vaga ao usuário logado
+        vaga.usuario_id = current_user.id
+        db.session.commit()
+        
+        return jsonify({"status": "sucesso", "message": f"Você foi inscrito na vaga de {vaga.funcao} com sucesso!"})
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"status": "erro", "message": f"Ocorreu um erro ao se inscrever na vaga: {str(e)}"}), 500
+
+
 
 # --- 7. ROTAS DO PAINEL DO COORDENADOR (ADMIN) ---
 @app.route('/admin')
