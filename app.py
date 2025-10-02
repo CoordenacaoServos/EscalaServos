@@ -7,6 +7,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
 from datetime import datetime, date, timedelta
 from functools import wraps
+from flask_mail import Mail, Message
 
 load_dotenv()
 
@@ -16,22 +17,30 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'default-secret-key-for-
 
 # Lógica para usar o banco de dados do Render (PostgreSQL) ou SQLite local
 database_url = os.environ.get('DATABASE_URL')
-if database_url:
-    # Corrige a URL do Render para ser compatível com SQLAlchemy
+if database_url and database_url.startswith("postgres://"):
     app.config['SQLALCHEMY_DATABASE_URI'] = database_url.replace("postgres://", "postgresql://", 1)
 else:
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///escala.db'
+    app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:///escala.db'
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     "pool_pre_ping": True,
 }
 
+# --- CONFIGURAÇÃO DE E-MAIL ---
+app.config['MAIL_SERVER'] = os.environ.get('MAIL_SERVER')
+app.config['MAIL_PORT'] = int(os.environ.get('MAIL_PORT', 587))
+app.config['MAIL_USE_TLS'] = os.environ.get('MAIL_USE_TLS', 'true').lower() in ['true', 'on', '1']
+app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
+app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
+app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_DEFAULT_SENDER')
+
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
 login_manager = LoginManager(app)
+mail = Mail(app)
 login_manager.login_view = 'login'
+
 
 # --- 2. MODELOS DO BANCO DE DADOS ---
 usuario_habilidades = db.Table('usuario_habilidades',
@@ -68,10 +77,8 @@ class Vaga(db.Model):
     usuario_id = db.Column(db.Integer, db.ForeignKey('usuario.id'), nullable=True)
     usuario = db.relationship('Usuario')
 
-# --- 3. LÓGICA DE LIMPEZA E DECORATORS ---
 
-
-
+# --- 3. FUNÇÕES AUXILIARES E DECORATORS ---
 @login_manager.user_loader
 def load_user(user_id):
     return Usuario.query.get(int(user_id))
@@ -84,6 +91,7 @@ def admin_required(f):
             return redirect(url_for('index'))
         return f(*args, **kwargs)
     return decorated_function
+
 
 # --- 4. ROTA SECRETA PARA SETUP INICIAL ---
 @app.route('/setup-inicial/<secret_key>')
@@ -101,9 +109,8 @@ def setup_database(secret_key):
         admin_email = os.environ.get('ADMIN_EMAIL')
         admin_pass = os.environ.get('ADMIN_PASSWORD')
         admin_nome = os.environ.get('ADMIN_NAME')
-
         if not (admin_email and admin_pass and admin_nome):
-            return "Variáveis de ambiente do admin (ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_NAME) não configuradas no Render.", 500
+            return "Variáveis de ambiente do admin não configuradas.", 500
 
         admin_criado = "não criado (já existe)"
         if not Usuario.query.filter_by(email=admin_email).first():
@@ -118,7 +125,8 @@ def setup_database(secret_key):
         db.session.rollback()
         return f"Ocorreu um erro durante o setup: {e}", 500
 
-# --- 5. ROTAS DE AUTENTICAÇÃO E PÁGINAS ---
+
+# --- 5. ROTAS DE AUTENTICAÇÃO E PÁGINAS GERAIS ---
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if current_user.is_authenticated: return redirect(url_for('index'))
@@ -128,7 +136,7 @@ def login():
             login_user(user)
             return redirect(url_for('index'))
         else:
-            flash('Email ou senha inválidos.')
+            flash('Email ou senha inválidos.', 'danger')
     return render_template('login.html')
 
 @app.route('/logout')
@@ -140,9 +148,55 @@ def logout():
 @app.route('/')
 @login_required
 def index():
+    # A página principal mostra a escala geral.
     return render_template('index.html')
 
-# --- 6. ROTAS DO PAINEL DO COORDENADOR ---
+
+# --- 6. ROTAS DO ACÓLITO (USUÁRIO LOGADO) ---
+@app.route('/minha-escala')
+@login_required
+def minha_escala():
+    minhas_vagas = Vaga.query.join(Missa).filter(Vaga.usuario_id == current_user.id, Missa.arquivada == False).order_by(Missa.data.asc()).all()
+    return render_template('minha_escala.html', minhas_vagas=minhas_vagas)
+
+@app.route('/pedir-substituicao/<int:vaga_id>', methods=['POST'])
+@login_required
+def pedir_substituicao(vaga_id):
+    vaga = Vaga.query.get_or_404(vaga_id)
+    if vaga.usuario_id != current_user.id:
+        flash('Você não tem permissão para liberar esta vaga.', 'danger')
+        return redirect(url_for('minha_escala'))
+
+    acolito_que_saiu = current_user.nome
+    missa_da_vaga = vaga.missa
+    funcao_da_vaga = vaga.funcao
+
+    vaga.usuario_id = None
+    db.session.commit()
+    flash('Sua vaga foi liberada com sucesso!', 'success')
+
+    try:
+        outros_acolitos = Usuario.query.filter(
+            Usuario.id != current_user.id, 
+            Usuario.is_admin == False
+        ).all()
+        if outros_acolitos:
+            emails_destinatarios = [u.email for u in outros_acolitos]
+            assunto = f"Oportunidade de Substituição: {funcao_da_vaga}"
+            corpo_html = render_template('email/pedido_substituicao.html', 
+                                         nome_acolito=acolito_que_saiu,
+                                         missa=missa_da_vaga,
+                                         funcao=funcao_da_vaga)
+            msg = Message(subject=assunto, recipients=emails_destinatarios, html=corpo_html)
+            mail.send(msg)
+            flash('Os outros acólitos foram notificados sobre a vaga!', 'info')
+    except Exception as e:
+        flash(f'Houve um erro ao notificar o grupo: {e}', 'warning')
+
+    return redirect(url_for('minha_escala'))
+
+
+# --- 7. ROTAS DO PAINEL DO COORDENADOR (ADMIN) ---
 @app.route('/admin')
 @login_required
 @admin_required
@@ -186,8 +240,8 @@ def add_user():
     if Usuario.query.filter_by(email=email).first():
         flash("Já existe um usuário com este email.", "danger")
     else:
-        senha_hash = generate_password_hash(password)
-        novo_usuario = Usuario(nome=nome, email=email, senha_hash=senha_hash, is_admin=False)
+        novo_usuario = Usuario(nome=nome, email=email, is_admin=False)
+        novo_usuario.set_password(password)
         db.session.add(novo_usuario)
         db.session.commit()
         flash(f"Acólito '{nome}' cadastrado com sucesso!", "success")
@@ -224,11 +278,11 @@ def add_missa():
         data_str, horario_str, funcoes = request.form.get('data'), request.form.get('horario'), request.form.getlist('funcao')
         data_obj, horario_obj = datetime.strptime(data_str, '%Y-%m-%d').date(), datetime.strptime(horario_str, '%H:%M').time()
         nova_missa = Missa(data=data_obj, horario=horario_obj)
-        db.session.add(nova_missa)
         for nome_funcao in funcoes:
             if nome_funcao.strip():
                 nova_vaga = Vaga(funcao=nome_funcao.strip(), missa=nova_missa)
                 db.session.add(nova_vaga)
+        db.session.add(nova_missa)
         db.session.commit()
         flash("Missa cadastrada com sucesso!", "success")
     except Exception as e:
@@ -259,7 +313,28 @@ def delete_missa(missa_id):
     flash("Missa excluída com sucesso.", "success")
     return redirect(url_for('admin_panel'))
 
-# --- 7. ROTA DA API ---
+@app.route('/archive-manual', methods=['POST'])
+@login_required
+@admin_required
+def archive_masses_manual():
+    try:
+        cutoff_date = date.today() - timedelta(days=15)
+        num_arquivadas = db.session.query(Missa).filter(
+            Missa.data < cutoff_date, 
+            Missa.arquivada == False
+        ).update({"arquivada": True})
+        db.session.commit()
+        if num_arquivadas > 0:
+            flash(f'{num_arquivadas} missas antigas foram arquivadas com sucesso!', 'success')
+        else:
+            flash('Não há missas antigas para arquivar.', 'secondary')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Ocorreu um erro ao arquivar as missas: {e}', 'danger')
+    return redirect(url_for('admin_panel'))
+
+
+# --- 8. ROTA DA API ---
 @app.route('/api/missas')
 @login_required
 def get_missas():
@@ -268,11 +343,23 @@ def get_missas():
     for missa in missas_db:
         slots = []
         for vaga in missa.vagas:
-            slots.append({"role": vaga.funcao, "acolyte": vaga.usuario.nome if vaga.usuario else None})
-        lista_missas.append({"id": missa.id, "date": missa.data.isoformat(), "day": dias_semana[missa.data.weekday()], "time": missa.horario.strftime('%H:%M'), "slots": slots})
+            slots.append({
+                "role": vaga.funcao, 
+                "acolyte": vaga.usuario.nome if vaga.usuario else None,
+                "vaga_id": vaga.id,
+                "is_mine": (current_user.is_authenticated and vaga.usuario_id == current_user.id)
+            })
+        lista_missas.append({
+            "id": missa.id, 
+            "date": missa.data.isoformat(), 
+            "day": dias_semana[missa.data.weekday()], 
+            "time": missa.horario.strftime('%H:%M'), 
+            "slots": slots
+        })
     return jsonify({"status": "sucesso", "missas": lista_missas})
 
-# --- 8. COMANDOS DE TERMINAL ---
+
+# --- 9. COMANDOS DE TERMINAL ---
 @app.cli.command("create-admin")
 def create_admin():
     """Cria um usuário administrador para uso local."""
@@ -298,34 +385,7 @@ def seed_habilidades():
             print(f"Adicionando habilidade: {funcao}")
     db.session.commit()
     print("Tabela de habilidades populada com sucesso!")
-    
-# ADICIONE ESTA NOVA FUNÇÃO
-@app.route('/archive-manual', methods=['POST'])
-@login_required
-@admin_required
-def archive_masses_manual():
-    """
-    Esta rota é acionada pelo botão no painel do admin 
-    para arquivar manualmente as missas antigas.
-    """
-    try:
-        cutoff_date = date.today() - timedelta(days=15)
 
-        # Lógica de atualização mais eficiente
-        num_arquivadas = db.session.query(Missa).filter(
-            Missa.data < cutoff_date, 
-            Missa.arquivada == False
-        ).update({"arquivada": True})
-
-        db.session.commit()
-
-        if num_arquivadas > 0:
-            flash(f'{num_arquivadas} missas antigas foram arquivadas com sucesso!', 'success')
-        else:
-            flash('Não há missas antigas para arquivar.', 'secondary')
-
-    except Exception as e:
-        db.session.rollback()
-        flash(f'Ocorreu um erro ao arquivar as missas: {e}', 'danger')
-
-    return redirect(url_for('admin_panel')) 
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)

@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minha Escala</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@1/css/pico.min.css">
+</head>
+<body>
+    <main class="container">
+        <nav>
+            <ul><li><strong>Minha Escala</strong></li></ul>
+            <ul>
+                <li><a href="{{ url_for('index') }}">Ver Escala Completa</a></li>
+                <li><a href="{{ url_for('logout') }}" role="button" class="secondary outline">Sair</a></li>
+            </ul>
+        </nav>
+
+        <hgroup>
+            <h2>Meus Próximos Compromissos</h2>
+            <p>Aqui estão as missas e funções para as quais você está escalado.</p>
+        </hgroup>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}{% for category, message in messages %}
+                <article class="{{ 'secondary' if category == 'info' else category }}">
+                    {{ message }}
+                </article>
+            {% endfor %}{% endif %}
+        {% endwith %}
+
+        {% if minhas_vagas %}
+            {% for vaga in minhas_vagas %}
+            <article>
+                <header>
+                    <strong>Missa de {{ vaga.missa.data.strftime('%d/%m/%Y') }} às {{ vaga.missa.horario.strftime('%H:%M') }}</strong>
+                </header>
+                Sua função: <strong>{{ vaga.funcao }}</strong>
+                <footer>
+                    <form action="{{ url_for('pedir_substituicao', vaga_id=vaga.id) }}" method="post" onsubmit="return confirm('Tem certeza que deseja liberar esta vaga e notificar o grupo?');">
+                        <button type="submit" class="contrast outline">Pedir Substituição</button>
+                    </form>
+                </footer>
+            </article>
+            {% endfor %}
+        {% else %}
+            <article>
+                <p>Você não está escalado para nenhuma missa futura.</p>
+            </article>
+        {% endif %}
+    </main>
+</body>
+</html>

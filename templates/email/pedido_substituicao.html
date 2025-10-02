@@ -1,0 +1,15 @@
+<p>Atenção!</p>
+
+<p>
+    O Acólito <strong>{{ nome_acolito }}</strong> pediu substituição para a missa do dia 
+    <strong>{{ missa.data.strftime('%d/%m/%Y') }}</strong> às <strong>{{ missa.horario.strftime('%H:%M') }}</strong> 
+    com a função de <strong>{{ funcao }}</strong>.
+</p>
+
+<p>
+    Caso você possa substituí-lo, clique no link abaixo e pegue sua vaga:
+</p>
+
+<p>
+    <a href="{{ url_for('index', _external=True) }}">Pegar Vaga no Sistema de Escala</a>
+</p>
