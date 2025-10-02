@@ -65,14 +65,8 @@ class Vaga(db.Model):
     usuario = db.relationship('Usuario')
 
 # --- 3. LÓGICA DE LIMPEZA E DECORATORS ---
-@app.before_request
-def cleanup_old_masses():
-    cutoff_date = date.today() - timedelta(days=15)
-    missas_para_arquivar = Missa.query.filter(Missa.data < cutoff_date, Missa.arquivada == False).all()
-    if missas_para_arquivar:
-        for missa in missas_para_arquivar:
-            missa.arquivada = True
-        db.session.commit()
+
+
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -300,3 +294,34 @@ def seed_habilidades():
             print(f"Adicionando habilidade: {funcao}")
     db.session.commit()
     print("Tabela de habilidades populada com sucesso!")
+    
+# ADICIONE ESTA NOVA FUNÇÃO
+@app.route('/archive-manual', methods=['POST'])
+@login_required
+@admin_required
+def archive_masses_manual():
+    """
+    Esta rota é acionada pelo botão no painel do admin 
+    para arquivar manualmente as missas antigas.
+    """
+    try:
+        cutoff_date = date.today() - timedelta(days=15)
+
+        # Lógica de atualização mais eficiente
+        num_arquivadas = db.session.query(Missa).filter(
+            Missa.data < cutoff_date, 
+            Missa.arquivada == False
+        ).update({"arquivada": True})
+
+        db.session.commit()
+
+        if num_arquivadas > 0:
+            flash(f'{num_arquivadas} missas antigas foram arquivadas com sucesso!', 'success')
+        else:
+            flash('Não há missas antigas para arquivar.', 'secondary')
+
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Ocorreu um erro ao arquivar as missas: {e}', 'danger')
+
+    return redirect(url_for('admin_panel')) 
