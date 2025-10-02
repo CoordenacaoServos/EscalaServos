@@ -90,6 +90,14 @@
                             {% if not usuario.is_admin %}
                             <a href="{{ url_for('edit_usuario', user_id=usuario.id) }}" role="button" class="outline"
                                 style="padding: 2px 8px;">Editar Habilidades</a>
+                            <form action="{{ url_for('delete_user', user_id=usuario.id) }}" method="post"
+                                style="display:inline;">
+                                <button type="submit" class="contrast outline"
+                                    style="padding: 2px 8px; margin-left: 5px;"
+                                    onclick="return confirm('Tem certeza que deseja excluir o acólito {{ usuario.nome }}? Esta ação é irreversível.');">
+                                    Excluir
+                                </button>
+                            </form>
                             {% else %}
                             Admin
                             {% endif %}
