@@ -28,6 +28,7 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 }
 
 # --- CONFIGURAÇÃO DE E-MAIL ---
+# (Mantemos as configurações, mas a funcionalidade não será usada na rota)
 app.config['MAIL_SERVER'] = os.environ.get('MAIL_SERVER')
 app.config['MAIL_PORT'] = int(os.environ.get('MAIL_PORT', 587))
 app.config['MAIL_USE_TLS'] = os.environ.get('MAIL_USE_TLS', 'true').lower() in ['true', 'on', '1']
@@ -167,33 +168,15 @@ def pedir_substituicao(vaga_id):
         flash('Você não tem permissão para liberar esta vaga.', 'danger')
         return redirect(url_for('minha_escala'))
 
-    acolito_que_saiu = current_user.nome
-    missa_da_vaga = vaga.missa
-    funcao_da_vaga = vaga.funcao
-
+    # Libera a vaga no sistema
     vaga.usuario_id = None
     db.session.commit()
-    flash('Sua vaga foi liberada com sucesso!', 'success')
-
-    try:
-        outros_acolitos = Usuario.query.filter(
-            Usuario.id != current_user.id, 
-            Usuario.is_admin == False
-        ).all()
-        if outros_acolitos:
-            emails_destinatarios = [u.email for u in outros_acolitos]
-            assunto = f"Oportunidade de Substituição: {funcao_da_vaga}"
-            corpo_html = render_template('email/pedido_substituicao.html', 
-                                         nome_acolito=acolito_que_saiu,
-                                         missa=missa_da_vaga,
-                                         funcao=funcao_da_vaga)
-            msg = Message(subject=assunto, recipients=emails_destinatarios, html=corpo_html)
-            mail.send(msg)
-            flash('Os outros acólitos foram notificados sobre a vaga!', 'info')
-    except Exception as e:
-        flash(f'Houve um erro ao notificar o grupo: {e}', 'warning')
-
+    
+    # Adiciona uma mensagem de sucesso
+    flash('Sua vaga foi liberada com sucesso! Avise o grupo para que alguém a pegue.', 'success')
+    
     return redirect(url_for('minha_escala'))
+
 
 @app.route('/api/inscrever-vaga/<int:vaga_id>', methods=['POST'])
 @login_required
@@ -222,7 +205,6 @@ def inscrever_vaga(vaga_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({"status": "erro", "message": f"Ocorreu um erro ao se inscrever na vaga: {str(e)}"}), 500
-
 
 
 # --- 7. ROTAS DO PAINEL DO COORDENADOR (ADMIN) ---
