@@ -90,12 +90,9 @@ def admin_required(f):
 # --- 4. ROTA SECRETA PARA SETUP INICIAL ---
 @app.route('/setup-inicial/<secret_key>')
 def setup_database(secret_key):
-    # Apenas executa se a chave na URL for igual à SECRET_KEY da aplicação
     if secret_key != app.config['SECRET_KEY']:
         return "Acesso negado: chave inválida.", 403
-
     try:
-        # 1. Popula as Habilidades
         funcoes_padrao = ["Cerimoniário Mor (CM)", "Cerimoniário da Palavra (CP)", "Cruciferário (CR)", "Ceroferário (Vela)", "Turiferário (T)", "Naveteiro (N)", "Mitra (M)", "Báculo (B)","Acólito Geral"]
         habilidades_criadas = 0
         for funcao in funcoes_padrao:
@@ -103,7 +100,6 @@ def setup_database(secret_key):
                 db.session.add(Habilidade(funcao=funcao))
                 habilidades_criadas += 1
         
-        # 2. Cria o Administrador a partir das variáveis de ambiente
         admin_email = os.environ.get('ADMIN_EMAIL')
         admin_pass = os.environ.get('ADMIN_PASSWORD')
         admin_nome = os.environ.get('ADMIN_NAME')
@@ -120,7 +116,6 @@ def setup_database(secret_key):
         
         db.session.commit()
         return f"Setup concluído. {habilidades_criadas} habilidades criadas. Admin {admin_criado}. POR SEGURANÇA, REMOVA ESTA ROTA DO SEU CÓDIGO AGORA.", 200
-    
     except Exception as e:
         db.session.rollback()
         return f"Ocorreu um erro durante o setup: {e}", 500
@@ -278,3 +273,30 @@ def get_missas():
             slots.append({"role": vaga.funcao, "acolyte": vaga.usuario.nome if vaga.usuario else None})
         lista_missas.append({"id": missa.id, "date": missa.data.isoformat(), "day": dias_semana[missa.data.weekday()], "time": missa.horario.strftime('%H:%M'), "slots": slots})
     return jsonify({"status": "sucesso", "missas": lista_missas})
+
+# --- 8. COMANDOS DE TERMINAL ---
+@app.cli.command("create-admin")
+def create_admin():
+    """Cria um usuário administrador para uso local."""
+    email = input("Digite o email do administrador: ")
+    password = input("Digite a senha do administrador: ")
+    nome = input("Digite o nome do administrador: ")
+    if Usuario.query.filter_by(email=email).first():
+        print(f"Usuário com o email '{email}' já existe.")
+        return
+    admin = Usuario(email=email, nome=nome, is_admin=True)
+    admin.set_password(password)
+    db.session.add(admin)
+    db.session.commit()
+    print(f"Administrador '{nome}' criado com sucesso!")
+
+@app.cli.command("seed-habilidades")
+def seed_habilidades():
+    """Popula a tabela de habilidades com funções padrão."""
+    funcoes_padrao = ["Cerimoniário Mor (CM)", "Cerimoniário da Palavra (CP)", "Cruciferário (CR)", "Ceroferário (Vela)", "Turiferário (T)", "Naveteiro (N)", "Mitra (M)", "Báculo (B)","Acólito Geral"]
+    for funcao in funcoes_padrao:
+        if not Habilidade.query.filter_by(funcao=funcao).first():
+            db.session.add(Habilidade(funcao=funcao))
+            print(f"Adicionando habilidade: {funcao}")
+    db.session.commit()
+    print("Tabela de habilidades populada com sucesso!")
